@@ -12,32 +12,146 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
 
-  <!-- Babel (para transformar JSX en el navegador) -->
+  <!-- Babel -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body class="bg-neutral-50">
   <div id="root" class="p-6 text-neutral-700">Cargando…</div>
-  <noscript>Esta página necesita JavaScript habilitado.</noscript>
 
-  <!-- Tu aplicación en JSX -->
   <script type="text/babel" data-presets="env,react">
-    const { useState } = React;
+    const { useState, useMemo, useEffect } = React;
 
-    function App() {
-      const [contador, setContador] = useState(0);
+    // Días y horas
+    const DAYS = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"];
+    const START_HOUR = 6, END_HOUR = 23;
+    const DEFAULT_USERS = ["Ana","Luis","Carla","Miguel","Sofía","Pedro"];
+
+    // Helpers de fechas
+    const toMidnight = d => { const x=new Date(d); x.setHours(0,0,0,0); return x; };
+    const startOfWeek = d => { const x=toMidnight(d); const day=(x.getDay()+6)%7; x.setDate(x.getDate()-day); return x; };
+    const addDays = (d,n) => { const x=new Date(d); x.setDate(x.getDate()+n); return x; };
+    const addWeeks = (d,n) => addDays(d, n*7);
+    const isoKey = d => toMidnight(d).toISOString().slice(0,10);
+    const monthNameEs = d => new Intl.DateTimeFormat('es-ES',{month:'long'}).format(d);
+
+    // Horas y etiquetas
+    const rangeHours = (s,e) => Array.from({length:e-s+1}, (_,i)=>i+s);
+    const hourLabel = h => `${String(h).padStart(2,"0")}:00`;
+
+    // Disponibilidad vacía
+    const createEmpty = () => {
+      const av={};
+      for(const d of DAYS){ av[d]={}; for(let h=START_HOUR;h<=END_HOUR;h++) av[d][h]=false; }
+      return av;
+    };
+    const createUsers = () => DEFAULT_USERS.map((name,i)=>({ id:`u_${i}`, name, availability:createEmpty() }));
+
+    // Guardado local
+    const STORAGE_KEY = "disponibilidad_v1";
+    const load = () => { try{ const raw=localStorage.getItem(STORAGE_KEY); return raw?JSON.parse(raw):{}; }catch{return {}} };
+    const save = (obj) => localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+
+    // Color por cantidad
+    const countToHsl = (count,max) => {
+      const ratio=max===0?0:count/max;
+      const hue=120*ratio; // rojo→verde
+      const saturation=80;
+      const lightness=92-ratio*35;
+      return `hsl(${hue}deg ${saturation}% ${lightness}%)`;
+    };
+
+    const Btn = ({children, onClick, className=""}) => (
+      <button onClick={onClick} className={`px-3 py-1.5 rounded-xl border text-sm hover:shadow transition ${className}`}>{children}</button>
+    );
+
+    function App(){
+      const HOURS = useMemo(()=>rangeHours(START_HOUR,END_HOUR),[]);
+      const [weekStart,setWeekStart] = useState(()=>startOfWeek(new Date()));
+      const weekKey = isoKey(weekStart);
+
+      const [weeks,setWeeks] = useState(()=>{ const all=load(); if(!all[weekKey]) all[weekKey]=createUsers(); return all; });
+      useEffect(()=>{ save(weeks); },[weeks]);
+
+      const users = weeks[weekKey] ?? createUsers();
+      const [activeId,setActiveId] = useState(users[0]?.id);
+
+      const counts = useMemo(()=>{
+        const map={}; for(const d of DAYS){ map[d]={}; for(const h of HOURS){ map[d][h]=users.reduce((a,u)=>a+(u.availability[d][h]?1:0),0);} }
+        return map;
+      },[users]);
+
+      const activeUser = users.find(u=>u.id===activeId);
+
+      const toggleCell = (d,h) => {
+        setWeeks(prev=>{
+          const next=[...users].map(u=>u.id!==activeId?u:{...u,availability:{...u.availability,[d]:{...u.availability[d],[h]:!u.availability[d][h]}}});
+          return {...prev,[weekKey]:next};
+        });
+      };
+
+      const addUser = () => {
+        const name=prompt("Nombre:");
+        if(!name) return;
+        setWeeks(prev=>({...prev,[weekKey]:[...users,{id:`u_${Date.now()}`,name,availability:createEmpty()}]}));
+      };
+
+      const goPrev=()=>setWeekStart(addWeeks(weekStart,-1));
+      const goNext=()=>setWeekStart(addWeeks(weekStart,1));
+
+      const headers = DAYS.map((d,i)=>{const date=addDays(weekStart,i); return `${d} ${date.getDate()}`;});
 
       return (
-        <div className="max-w-xl mx-auto mt-10 p-6 rounded-2xl shadow bg-white">
-          <h1 className="text-2xl font-bold mb-4">Disponibilidad Semanal</h1>
-          <p className="mb-4 text-gray-600">
-            Este es un ejemplo mínimo para confirmar que React + Babel funcionan en GitHub Pages.
-          </p>
-          <button
-            onClick={() => setContador(contador + 1)}
-            className="px-4 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700"
-          >
-            Clics: {contador}
-          </button>
+        <div className="min-h-screen bg-neutral-50">
+          <header className="sticky top-0 bg-white/80 backdrop-blur border-b px-4 py-3 flex justify-between items-center">
+            <h1 className="font-semibold text-lg">Disponibilidad semanal</h1>
+            <div className="flex gap-2">
+              <Btn onClick={addUser}>Añadir usuario</Btn>
+              <Btn onClick={goPrev}>◀ Semana</Btn>
+              <Btn onClick={goNext}>Semana ▶</Btn>
+            </div>
+          </header>
+
+          <div className="p-4">
+            <div className="mb-3 text-sm text-gray-600">
+              Usuario activo:{" "}
+              {users.map(u=>(
+                <button key={u.id}
+                        onClick={()=>setActiveId(u.id)}
+                        className={`px-2 py-1 rounded-md border mr-1 ${u.id===activeId?"bg-emerald-600 text-white":"bg-white"}`}>
+                  {u.name}
+                </button>
+              ))}
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border bg-white shadow">
+              <div className="grid" style={{gridTemplateColumns:`120px repeat(${DAYS.length},1fr)`}}>
+                <div className="p-2 font-medium border-b bg-gray-50">Hora</div>
+                {headers.map(h=><div key={h} className="p-2 font-medium border-b text-center bg-gray-50">{h}</div>)}
+              </div>
+
+              {HOURS.map(h=>(
+                <div key={h} className="grid" style={{gridTemplateColumns:`120px repeat(${DAYS.length},1fr)`}}>
+                  <div className="p-2 border-b text-sm text-gray-500 bg-gray-50">{hourLabel(h)}</div>
+                  {DAYS.map(d=>{
+                    const c=counts[d][h];
+                    const isSel=activeUser?.availability[d][h];
+                    return (
+                      <button key={d}
+                        onClick={()=>toggleCell(d,h)}
+                        className="h-10 border-b border-l relative"
+                        style={{background:countToHsl(c,users.length)}}
+                        title={`Disponibles: ${c}/${users.length}`}>
+                        <span className="absolute top-1 right-1 text-[10px] font-bold text-gray-700">{c}</span>
+                        {isSel && <span className="text-base">●</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-3 text-xs text-gray-500">● indica tu propia disponibilidad</div>
+          </div>
         </div>
       );
     }
